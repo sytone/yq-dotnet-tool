@@ -1,0 +1,20 @@
+# .NET build artifacts
+bin/
+obj/
+artifacts/
+
+# NuGet packages
+*.nupkg
+*.snupkg
+
+# User-specific files
+*.user
+*.suo
+.vs/
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Staged native binaries (downloaded by CI, not checked in)
+src/Yq.Tool/runtimes/

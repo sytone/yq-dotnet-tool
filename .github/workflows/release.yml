@@ -1,0 +1,282 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      force_version:
+        description: 'Force a specific upstream yq version (e.g. v4.44.3). Leave blank to use the latest.'
+        required: false
+        default: ''
+  schedule:
+    # Run daily at 06:00 UTC
+    - cron: '0 6 * * *'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish yq.tool
+    runs-on: ubuntu-latest
+
+    steps:
+      # -----------------------------------------------------------------------
+      # 1. Check out repository
+      # -----------------------------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # -----------------------------------------------------------------------
+      # 2. Set up .NET 8
+      # -----------------------------------------------------------------------
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      # -----------------------------------------------------------------------
+      # 3. Determine upstream yq version
+      # -----------------------------------------------------------------------
+      - name: Determine upstream yq version
+        id: upstream
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FORCE_VERSION: ${{ github.event.inputs.force_version }}
+        run: |
+          if [[ -n "$FORCE_VERSION" ]]; then
+            TAG="$FORCE_VERSION"
+          else
+            TAG=$(gh release view --repo mikefarah/yq --json tagName -q '.tagName')
+          fi
+          VERSION="${TAG#v}"   # strip leading 'v'
+          echo "tag=$TAG"      >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Upstream yq tag: $TAG  =>  NuGet version: $VERSION"
+
+      # -----------------------------------------------------------------------
+      # 4. Check whether this version is already published on NuGet
+      # -----------------------------------------------------------------------
+      - name: Check if already published
+        id: check_published
+        env:
+          NUGET_VERSION: ${{ steps.upstream.outputs.version }}
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            "https://api.nuget.org/v3-flatcontainer/yq.tool/$NUGET_VERSION/yq.tool.nuspec" || true)
+          if [[ "$STATUS" == "200" ]]; then
+            echo "Version $NUGET_VERSION already published – skipping."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Version $NUGET_VERSION not yet published – proceeding."
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # -----------------------------------------------------------------------
+      # 5. Download upstream release assets + checksums
+      # -----------------------------------------------------------------------
+      - name: Download upstream assets
+        if: steps.check_published.outputs.skip == 'false'
+        env:
+          TAG: ${{ steps.upstream.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          BASE_URL="https://github.com/mikefarah/yq/releases/download/${TAG}"
+
+          declare -A ASSETS=(
+            ["win-x64"]="yq_windows_amd64.exe"
+            ["win-arm64"]="yq_windows_arm64.exe"
+            ["linux-x64"]="yq_linux_amd64"
+            ["linux-arm64"]="yq_linux_arm64"
+            ["osx-x64"]="yq_darwin_amd64"
+            ["osx-arm64"]="yq_darwin_arm64"
+          )
+
+          mkdir -p /tmp/yq-assets
+
+          # Download checksum file
+          echo "Downloading checksums_hashes_order file..."
+          if curl -fsSL "${BASE_URL}/checksums_hashes_order" -o /tmp/yq-assets/checksums_hashes_order; then
+            echo "Downloaded checksums_hashes_order"
+          else
+            echo "WARNING: checksums_hashes_order not available – will skip checksum verification."
+          fi
+
+          # Download the main checksums file
+          CHECKSUM_FILE=""
+          for name in "checksums" "checksums.txt"; do
+            if curl -fsSL "${BASE_URL}/${name}" -o /tmp/yq-assets/checksums 2>/dev/null; then
+              CHECKSUM_FILE="/tmp/yq-assets/checksums"
+              echo "Downloaded checksum file: ${name}"
+              break
+            fi
+          done
+
+          if [[ -z "$CHECKSUM_FILE" ]]; then
+            echo "ERROR: No checksum file found for release ${TAG}. Aborting for security." >&2
+            echo "Please verify the release at https://github.com/mikefarah/yq/releases/tag/${TAG} and check if checksums are available." >&2
+            exit 1
+          fi
+
+          # Download each binary
+          for rid in "${!ASSETS[@]}"; do
+            ASSET="${ASSETS[$rid]}"
+            DEST="/tmp/yq-assets/${ASSET}"
+            echo "Downloading ${ASSET}..."
+            curl -fsSL "${BASE_URL}/${ASSET}" -o "${DEST}"
+          done
+
+      # -----------------------------------------------------------------------
+      # 6. Verify checksums
+      # -----------------------------------------------------------------------
+      - name: Verify checksums
+        if: steps.check_published.outputs.skip == 'false'
+        run: |
+          set -euo pipefail
+
+          declare -A ASSETS=(
+            ["win-x64"]="yq_windows_amd64.exe"
+            ["win-arm64"]="yq_windows_arm64.exe"
+            ["linux-x64"]="yq_linux_amd64"
+            ["linux-arm64"]="yq_linux_arm64"
+            ["osx-x64"]="yq_darwin_amd64"
+            ["osx-arm64"]="yq_darwin_arm64"
+          )
+
+          CHECKSUM_FILE="/tmp/yq-assets/checksums"
+
+          # Determine the hash algorithm used (prefer SHA-256)
+          HASH_CMD=""
+          if [[ -f /tmp/yq-assets/checksums_hashes_order ]]; then
+            while IFS= read -r algo; do
+              algo_lc="${algo,,}"
+              if [[ "$algo_lc" == *"256"* ]]; then
+                HASH_CMD="sha256sum"
+                break
+              elif [[ "$algo_lc" == *"512"* ]]; then
+                HASH_CMD="sha512sum"
+              fi
+            done < /tmp/yq-assets/checksums_hashes_order
+          fi
+          [[ -z "$HASH_CMD" ]] && HASH_CMD="sha256sum"
+          echo "Using hash command: $HASH_CMD"
+
+          FAILED=0
+          for rid in "${!ASSETS[@]}"; do
+            ASSET="${ASSETS[$rid]}"
+            FILE="/tmp/yq-assets/${ASSET}"
+
+            # Find the expected hash in the checksum file (case-insensitive filename match)
+            EXPECTED=$(grep -iF " ${ASSET}" "$CHECKSUM_FILE" | awk '{print $1}' | head -1)
+            if [[ -z "$EXPECTED" ]]; then
+              echo "WARNING: No checksum entry found for ${ASSET} – skipping verification."
+              continue
+            fi
+
+            ACTUAL=$($HASH_CMD "$FILE" | awk '{print $1}')
+            if [[ "${EXPECTED,,}" == "${ACTUAL,,}" ]]; then
+              echo "OK: ${ASSET}"
+            else
+              echo "CHECKSUM MISMATCH for ${ASSET}:" >&2
+              echo "  Expected: $EXPECTED" >&2
+              echo "  Actual:   $ACTUAL" >&2
+              FAILED=1
+            fi
+          done
+
+          if [[ "$FAILED" -ne 0 ]]; then
+            echo "ERROR: One or more checksum verifications failed. Aborting." >&2
+            exit 1
+          fi
+
+      # -----------------------------------------------------------------------
+      # 7. Stage binaries into the tool project
+      # -----------------------------------------------------------------------
+      - name: Stage binaries
+        if: steps.check_published.outputs.skip == 'false'
+        run: |
+          set -euo pipefail
+
+          declare -A ASSETS=(
+            ["win-x64"]="yq_windows_amd64.exe"
+            ["win-arm64"]="yq_windows_arm64.exe"
+            ["linux-x64"]="yq_linux_amd64"
+            ["linux-arm64"]="yq_linux_arm64"
+            ["osx-x64"]="yq_darwin_amd64"
+            ["osx-arm64"]="yq_darwin_arm64"
+          )
+
+          for rid in "${!ASSETS[@]}"; do
+            ASSET="${ASSETS[$rid]}"
+            SRC="/tmp/yq-assets/${ASSET}"
+
+            # Determine the target filename inside the package
+            if [[ "$rid" == win-* ]]; then
+              DEST_NAME="yq.exe"
+            else
+              DEST_NAME="yq"
+            fi
+
+            DEST_DIR="src/Yq.Tool/runtimes/${rid}/native"
+            mkdir -p "$DEST_DIR"
+            cp "$SRC" "${DEST_DIR}/${DEST_NAME}"
+            chmod +x "${DEST_DIR}/${DEST_NAME}" 2>/dev/null || true
+            echo "Staged: ${DEST_DIR}/${DEST_NAME}"
+          done
+
+      # -----------------------------------------------------------------------
+      # 8. Pack the NuGet package
+      # -----------------------------------------------------------------------
+      - name: Pack
+        if: steps.check_published.outputs.skip == 'false'
+        env:
+          NUGET_VERSION: ${{ steps.upstream.outputs.version }}
+        run: |
+          dotnet pack src/Yq.Tool/Yq.Tool.csproj \
+            -c Release \
+            /p:PackageVersion="$NUGET_VERSION" \
+            --output ./artifacts
+
+          echo "Packed artifacts:"
+          ls -lh ./artifacts/
+
+      # -----------------------------------------------------------------------
+      # 9. Push to NuGet.org
+      # -----------------------------------------------------------------------
+      - name: Push to NuGet.org
+        if: steps.check_published.outputs.skip == 'false'
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: |
+          dotnet nuget push "./artifacts/*.nupkg" \
+            --api-key "$NUGET_API_KEY" \
+            --source https://api.nuget.org/v3/index.json \
+            --skip-duplicate
+
+      # -----------------------------------------------------------------------
+      # 10. Create a GitHub release tag
+      # -----------------------------------------------------------------------
+      - name: Create GitHub release
+        if: steps.check_published.outputs.skip == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.upstream.outputs.tag }}
+          VERSION: ${{ steps.upstream.outputs.version }}
+        run: |
+          gh release create "v${VERSION}" \
+            --title "yq.tool v${VERSION}" \
+            --notes "Repackages upstream [mikefarah/yq ${TAG}](https://github.com/mikefarah/yq/releases/tag/${TAG}) as a .NET global tool.
+
+          ## Install
+
+          \`\`\`
+          dotnet tool install -g yq.tool
+          \`\`\`
+
+          ## Upgrade
+
+          \`\`\`
+          dotnet tool update -g yq.tool
+          \`\`\`" \
+            --repo sytone/yq-dotnet-tool \
+            2>/dev/null || echo "Release tag already exists, skipping."
