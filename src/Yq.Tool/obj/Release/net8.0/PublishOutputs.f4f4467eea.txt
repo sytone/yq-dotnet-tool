@@ -1,5 +1,0 @@
-/home/runner/work/yq-dotnet-tool/yq-dotnet-tool/src/Yq.Tool/bin/Release/net8.0/publish/Yq.Tool
-/home/runner/work/yq-dotnet-tool/yq-dotnet-tool/src/Yq.Tool/bin/Release/net8.0/publish/Yq.Tool.dll
-/home/runner/work/yq-dotnet-tool/yq-dotnet-tool/src/Yq.Tool/bin/Release/net8.0/publish/Yq.Tool.deps.json
-/home/runner/work/yq-dotnet-tool/yq-dotnet-tool/src/Yq.Tool/bin/Release/net8.0/publish/Yq.Tool.runtimeconfig.json
-/home/runner/work/yq-dotnet-tool/yq-dotnet-tool/src/Yq.Tool/bin/Release/net8.0/publish/Yq.Tool.pdb
