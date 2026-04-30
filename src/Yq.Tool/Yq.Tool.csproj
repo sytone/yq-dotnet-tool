@@ -1,0 +1,50 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>Yq.Tool</AssemblyName>
+    <RootNamespace>Yq.Tool</RootNamespace>
+
+    <!-- NuGet / tool packaging -->
+    <PackageId>yq.tool</PackageId>
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>yq</ToolCommandName>
+    <PackageVersion>0.0.0-dev</PackageVersion>
+
+    <Authors>sytone</Authors>
+    <Description>
+      A .NET global tool that wraps the upstream mikefarah/yq YAML/JSON/TOML processor.
+      Install once, run anywhere: dotnet tool install -g yq.tool
+      This is an unofficial repackaging. All credit goes to Mike Farah (https://github.com/mikefarah/yq).
+    </Description>
+    <PackageTags>yq;yaml;json;toml;tool;cli</PackageTags>
+    <PackageProjectUrl>https://github.com/sytone/yq-dotnet-tool</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/sytone/yq-dotnet-tool</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
+
+    <!-- Deterministic / reproducible -->
+    <Deterministic>true</Deterministic>
+    <PublishSingleFile>false</PublishSingleFile>
+    <SelfContained>false</SelfContained>
+  </PropertyGroup>
+
+  <!-- Include the upstream yq native binaries that have been staged into runtimes/ -->
+  <ItemGroup>
+    <None Include="runtimes\**\*"
+          Pack="true"
+          PackagePath="tools\net8.0\any\runtimes\%(RecursiveDir)%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <!-- Include project README at package root -->
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+</Project>
