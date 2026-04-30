@@ -147,29 +147,47 @@ jobs:
 
           CHECKSUM_FILE="/tmp/yq-assets/checksums"
 
-          # Determine the hash algorithm used (prefer SHA-256)
-          HASH_CMD=""
+          # Determine the hash algorithm and its column in the checksums file.
+          # yq uses a multi-hash format: "filename  hash1  hash2  ..."
+          # checksums_hashes_order lists the algorithm for each column (starting at column 2).
+          HASH_CMD="sha256sum"
+          SHA_COL=0  # 0 means fall back to traditional "hash  filename" format
+
           if [[ -f /tmp/yq-assets/checksums_hashes_order ]]; then
+            COL=2  # column 1 is filename; hash columns start at 2
             while IFS= read -r algo; do
               algo_lc="${algo,,}"
-              if [[ "$algo_lc" == *"256"* ]]; then
+              if [[ "$algo_lc" == "sha-256" || "$algo_lc" == "sha256" ]]; then
                 HASH_CMD="sha256sum"
+                SHA_COL=$COL
                 break
-              elif [[ "$algo_lc" == *"512"* ]]; then
+              elif [[ "$algo_lc" == "sha-512" || "$algo_lc" == "sha512" ]]; then
                 HASH_CMD="sha512sum"
+                SHA_COL=$COL
+                # Don't break – prefer SHA-256 if it appears later in the file
               fi
+              COL=$((COL + 1))
             done < /tmp/yq-assets/checksums_hashes_order
           fi
-          [[ -z "$HASH_CMD" ]] && HASH_CMD="sha256sum"
-          echo "Using hash command: $HASH_CMD"
+          echo "Using hash command: $HASH_CMD (checksums column: ${SHA_COL:-traditional})"
 
           FAILED=0
           for rid in "${!ASSETS[@]}"; do
             ASSET="${ASSETS[$rid]}"
             FILE="/tmp/yq-assets/${ASSET}"
 
-            # Find the expected hash in the checksum file (case-insensitive filename match)
-            EXPECTED=$(grep -iF " ${ASSET}" "$CHECKSUM_FILE" | awk '{print $1}' | head -1)
+            # Extract the expected hash from the checksums file.
+            # Support both formats:
+            #   Multi-hash (yq): "filename  hash1  hash2  ..."  → use awk column
+            #   Traditional:     "hash  filename"               → grep + awk $1
+            if [[ "$SHA_COL" -gt 0 ]]; then
+              EXPECTED=$(awk -v asset="$ASSET" -v col="$SHA_COL" \
+                'tolower($1) == tolower(asset) { print $col; exit }' \
+                "$CHECKSUM_FILE" || true)
+            else
+              EXPECTED=$(grep -iF " ${ASSET}" "$CHECKSUM_FILE" | awk '{print $1}' | head -1 || true)
+            fi
+
             if [[ -z "$EXPECTED" ]]; then
               echo "WARNING: No checksum entry found for ${ASSET} – skipping verification."
               continue
