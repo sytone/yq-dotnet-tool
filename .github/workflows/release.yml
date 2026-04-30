@@ -164,7 +164,7 @@ jobs:
               elif [[ "$algo_lc" == "sha-512" || "$algo_lc" == "sha512" ]]; then
                 HASH_CMD="sha512sum"
                 SHA_COL=$COL
-                # Don't break – prefer SHA-256 if it appears later in the file
+                # Don't break – keep scanning so SHA-256 can override SHA-512 if found later
               fi
               COL=$((COL + 1))
             done < /tmp/yq-assets/checksums_hashes_order
