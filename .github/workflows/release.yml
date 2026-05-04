@@ -23,21 +23,7 @@ jobs:
 
     steps:
       # -----------------------------------------------------------------------
-      # 1. Check out repository
-      # -----------------------------------------------------------------------
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      # -----------------------------------------------------------------------
-      # 2. Set up .NET 8
-      # -----------------------------------------------------------------------
-      - name: Set up .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '8.0.x'
-
-      # -----------------------------------------------------------------------
-      # 3. Determine upstream yq version
+      # 1. Determine upstream yq version
       # -----------------------------------------------------------------------
       - name: Determine upstream yq version
         id: upstream
@@ -56,7 +42,7 @@ jobs:
           echo "Upstream yq tag: $TAG  =>  NuGet version: $VERSION"
 
       # -----------------------------------------------------------------------
-      # 4. Check whether this version is already published on NuGet
+      # 2. Check whether this version is already published on NuGet
       # -----------------------------------------------------------------------
       - name: Check if already published
         id: check_published
@@ -72,6 +58,22 @@ jobs:
             echo "Version $NUGET_VERSION not yet published – proceeding."
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
+
+      # -----------------------------------------------------------------------
+      # 3. Check out repository
+      # -----------------------------------------------------------------------
+      - name: Checkout repository
+        if: steps.check_published.outputs.skip == 'false'
+        uses: actions/checkout@v4
+
+      # -----------------------------------------------------------------------
+      # 4. Set up .NET 8
+      # -----------------------------------------------------------------------
+      - name: Set up .NET
+        if: steps.check_published.outputs.skip == 'false'
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
 
       # -----------------------------------------------------------------------
       # 5. Download upstream release assets + checksums
@@ -263,7 +265,8 @@ jobs:
       # -----------------------------------------------------------------------
       # 9. Get a short-lived NuGet API key
       # -----------------------------------------------------------------------      
-      - name: NuGet login (OIDC → temp API key)      
+      - name: NuGet login (OIDC → temp API key)
+        if: steps.check_published.outputs.skip == 'false'
         uses: NuGet/login@v1
         id: login    
         with:
